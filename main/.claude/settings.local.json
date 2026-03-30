@@ -5,7 +5,18 @@
       "Bash(npm create:*)",
       "Bash(npm install:*)",
       "Bash(npx tailwindcss:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Read(//c//**)",
+      "Read(//c/Users/Hp/AppData/Local/Microsoft/WindowsApps//**)",
+      "Bash(cd /d)",
+      "Read(//d/MGM-SyncFlow/**)",
+      "mcp__ide__getDiagnostics",
+      "Bash(pnpm run:*)",
+      "Bash(npx vite:*)",
+      "Bash(sed -n '728,735p' src/index.css)",
+      "Bash(sed -n '818,825p' src/index.css)",
+      "Bash(sed -n '953,960p' src/index.css)"
     ]
   }
 }

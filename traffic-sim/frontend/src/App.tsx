@@ -6,23 +6,49 @@ import {
   getHospitals,
   startSimulation,
   type Hospital,
+  type CCTVNode,
   type EventLog,
   type SimulationWaypoints,
   type ViolationEvent,
+  type RouteWithCCTVs,
 } from "./services/api";
 
 type LatLng = [number, number];
+const AMBULANCE_ANIMATION_INTERVAL_MS = 100;
+const CCTV_HIGHLIGHT_DISTANCE_METERS = 50;
+
+function metersBetween(a: LatLng, b: LatLng): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) * 111000;
+}
+
+function findNearestCCTV(pos: LatLng, cctvs: CCTVNode[]): string | null {
+  if (!pos || cctvs.length === 0) return null;
+  let nearest: string | null = null;
+  let minDist = Infinity;
+  for (const cctv of cctvs) {
+    const dist = metersBetween(pos, [cctv.lat, cctv.lng]);
+    if (dist < minDist && dist < CCTV_HIGHLIGHT_DISTANCE_METERS) {
+      minDist = dist;
+      nearest = cctv.id;
+    }
+  }
+  return nearest;
+}
 
 function App() {
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [route, setRoute] = useState<LatLng[]>([]);
-  const [allRoutes, setAllRoutes] = useState<any[]>([]);
+  const [allRoutes, setAllRoutes] = useState<RouteWithCCTVs[]>([]);
   const [shortestRouteIndex, setShortestRouteIndex] = useState<number | null>(null);
   const [ambulancePos, setAmbulancePos] = useState<LatLng | null>(null);
+  const [activeCCTVId, setActiveCCTVId] = useState<string | null>(null);
   const [violations, setViolations] = useState<ViolationEvent[]>([]);
   const [logs, setLogs] = useState<EventLog[]>([]);
   const [waypoints, setWaypoints] = useState<SimulationWaypoints | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // CCTV nodes from the best route — used for proximity highlighting
+  const bestRouteCCTVs = shortestRouteIndex !== null ? (allRoutes[shortestRouteIndex]?.cctvs ?? []) : [];
 
   const animationRef = useRef<number | null>(null);
 
@@ -54,7 +80,8 @@ function App() {
 
       // Use backend's best route for ambulance animation
       setRoute(result.route);
-      setAllRoutes([]); // Backend returns best route only for now
+      setAllRoutes(result.routes || []);
+      setShortestRouteIndex(result.bestRouteIndex ?? null);
       setViolations(result.violations || []);
       setLogs(result.logs || []);
       setWaypoints(result.waypoints || null);
@@ -63,14 +90,16 @@ function App() {
       // Ambulance animation along the route
       let i = 0;
       animationRef.current = window.setInterval(() => {
-        setAmbulancePos(result.route[i]);
+        const pos = result.route[i];
+        setAmbulancePos(pos);
+        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs));
         i++;
 
         if (i >= result.route.length && animationRef.current !== null) {
           clearInterval(animationRef.current);
           animationRef.current = null;
         }
-      }, 30);
+      }, AMBULANCE_ANIMATION_INTERVAL_MS);
     } catch (err) {
       console.error("Simulation failed:", err);
     } finally {
@@ -108,22 +137,26 @@ function App() {
 
     setRoute(result.route || []);
     setAllRoutes([]);
+    setShortestRouteIndex(null);
     setViolations([]);
     setLogs(logs);
     setWaypoints(null);
+    setActiveCCTVId(null);
     setAmbulancePos((result.route && result.route[0]) || null);
 
     // Ambulance animation along the route
     if (result.route && result.route.length > 0) {
       let i = 0;
       animationRef.current = window.setInterval(() => {
-        setAmbulancePos(result.route[i]);
+        const pos = result.route[i];
+        setAmbulancePos(pos);
+        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs));
         i++;
         if (i >= result.route.length && animationRef.current !== null) {
           clearInterval(animationRef.current);
           animationRef.current = null;
         }
-      }, 30);
+      }, AMBULANCE_ANIMATION_INTERVAL_MS);
     }
   };
 
@@ -157,22 +190,26 @@ function App() {
 
     setRoute(result.route || []);
     setAllRoutes([]);
+    setShortestRouteIndex(null);
     setViolations([]);
     setLogs(logs);
     setWaypoints(null);
+    setActiveCCTVId(null);
     setAmbulancePos((result.route && result.route[0]) || null);
 
     // Ambulance animation along the route
     if (result.route && result.route.length > 0) {
       let i = 0;
       animationRef.current = window.setInterval(() => {
-        setAmbulancePos(result.route[i]);
+        const pos = result.route[i];
+        setAmbulancePos(pos);
+        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs));
         i++;
         if (i >= result.route.length && animationRef.current !== null) {
           clearInterval(animationRef.current);
           animationRef.current = null;
         }
-      }, 30);
+      }, AMBULANCE_ANIMATION_INTERVAL_MS);
     }
   };
 
@@ -187,11 +224,13 @@ function App() {
           allRoutes={allRoutes}
           shortestRouteIndex={shortestRouteIndex}
           ambulancePos={ambulancePos}
+          activeCCTVId={activeCCTVId}
+          bestRouteCCTVs={bestRouteCCTVs}
         />
       </section>
 
       <section className="logs-pane">
-        <LogsPanel logs={logs} waypoints={waypoints} loading={loading} />
+        <LogsPanel logs={logs} waypoints={waypoints} violations={violations} loading={loading} />
       </section>
     </div>
   );

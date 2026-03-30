@@ -80,6 +80,70 @@ export interface PatientResponse {
   ambulanceId: string;
 }
 
+export type LatLng = [number, number];
+
+export interface CCTVNode {
+  id: string;
+  lat: number;
+  lng: number;
+  status: "IDLE" | "TRACKING" | "VIOLATION" | "OFFLINE";
+  lastUpdate?: string | Date;
+  assignedRouteId?: string;
+  routeIndex?: number;
+  pathIndex?: number;
+  turnAngleDeg?: number;
+  intersectionValidated?: boolean;
+}
+
+export interface EventLog {
+  id: string;
+  timestamp: string | Date;
+  event: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface ViolationEvent {
+  type: "VIOLATION";
+  plate: string;
+  timestamp: string | Date;
+  cctvId: string;
+  lat: number;
+  lng: number;
+}
+
+export interface WaypointNode {
+  index: number;
+  cctvId: string;
+  coordinates: LatLng;
+}
+
+export interface SimulationWaypoints {
+  source: WaypointNode;
+  intermediate: WaypointNode[];
+  destination: WaypointNode;
+}
+
+export interface RouteWithCCTVs {
+  index: number;
+  path: LatLng[];
+  distance: number;
+  duration: number;
+  score: number;
+  isBest: boolean;
+  cctvs: CCTVNode[];
+}
+
+export interface SimulationResult {
+  route: LatLng[];
+  cctvs: CCTVNode[];
+  logs: EventLog[];
+  waypoints: SimulationWaypoints | null;
+  routes: RouteWithCCTVs[];
+  bestRouteIndex: number;
+  violations: ViolationEvent[];
+}
+
 export interface SimulationResponse {
   success: boolean;
   message: string;
@@ -104,8 +168,8 @@ export async function getHospitals(): Promise<Hospital[]> {
 export async function startSimulation(
   source: Hospital,
   destination: Hospital
-): Promise<any> {
-  return post<any>("/api/simulation/start", {
+): Promise<SimulationResult> {
+  return post<SimulationResult>("/api/simulation/start", {
     source: [source.lat, source.lng],
     destination: [destination.lat, destination.lng],
   });

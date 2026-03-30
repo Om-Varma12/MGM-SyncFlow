@@ -1,0 +1,938 @@
+ ▐▛███▜▌   Claude Code v2.1.87
+▝▜█████▛▘  minimax-m2.7:cloud · API Usage Billing
+  ▘▘ ▝▝    D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim
+
+❯ read the entire frontend code and see the intermediate cctv node showing on   
+the frontend. What I basically want is at any kinf of sharp route I want to add 
+ a node or kind of icon like hospital that shows that, that point has cctv      
+there so that I can more confidently show that the ambulance is passing through 
+ the cctvs. ask any questions that you have, write a proper detailed todo list  
+to keep track of things going to currently                                      
+
+● Let me read the frontend code to understand the current implementation.
+
+  Read 3 files (ctrl+o to expand)
+
+● Let me also check the ControlPanel and LogsPanel, and understand what data is
+  flowing through.
+
+  Read 2 files (ctrl+o to expand)
+
+● Now I have a clear picture of the codebase. Let me ask the critical clarifying
+   questions before building a proper plan.
+
+● User answered Claude's questions:
+  ⎿  · When you run the simulation, are CCTV markers currently showing on the 
+     map at all, or are they missing entirely? And is the problem specifically 
+     about the BEST route (lime line) not showing CCTV markers, or about all 
+     routes? → I dont know, but on the route I can see some dots, but those dots
+      are too much, it looks like on every 10-20 meters there is a cctv
+     · What visual style do you want for the CCTV nodes on the map? → CCTV 
+     camera icons with labels
+     · When the ambulance passes a CCTV node, what should happen — should it 
+     highlight/activate, or just be shown statically? → Both static + 
+     interaction
+
+● Good, now I understand the full picture:
+  1. CCTV markers DO render but there are too many (every 10-20m — way too
+  dense)
+  2. Style: CCTV camera icons with labels
+  3. Interaction: Highlight when ambulance passes nearby
+
+  Let me check the backend CCTV generation to understand why there are so many
+  nodes.
+
+  Read 2 files (ctrl+o to expand)
+
+● Now I have a complete picture. The issue is:
+
+  1. Too many CCTV nodes — OSRM returns very high-resolution routes (points
+  every ~5-15m), and turnThresholdDeg=45 still produces way too many candidates.
+   Overpass validation sometimes fails, falling back to start/end only, but if
+  Overpass partially succeeds it still adds many turns.
+  2. No min-distance filter between CCTV nodes.
+
+  Let me create a proper task list before we start.
+
+● Here's my detailed todo list:
+
+  Task 1 — Fix CCTV node density (Backend)
+  The core problem is in cctvService.ts. OSRM returns very high-resolution
+  routes (~5-15m between points), and with turnThresholdDeg=45 this produces way
+   too many sharp-turn candidates. Plus there's no minimum-distance guard
+  between selected nodes. Fix: add a MIN_CCTV_DISTANCE_METERS (~200-300m)
+  filter, and optionally raise the threshold to 60-70°.
+
+  Task 2 — CCTV camera icon with label (Frontend)
+  The current cctvIcon is only 24×24px — too small to be confident about.
+  Replace with a larger icon (36-40px) and add text labels ("CCTV 001", etc.)
+  visible at default zoom, so you can actually see what's there at a glance.
+
+  Task 3 — Highlight CCTV when ambulance passes (Frontend)
+  When the ambulance marker gets within ~50m of a CCTV node, scale it up /
+  change its color (e.g. yellow/glow) to visually show the ambulance "triggered"
+   that node. This requires tracking the active CCTV in App.tsx state and
+  passing it down to MapView.
+
+  Task 4 — Verify full data flow
+  Trace the data path: simulationController → simulationEngine → cctvService → 
+  API response → App.tsx → MapView. Make sure the best route's CCTV markers are
+  the ones that show interaction, and that fallback (route state alone) also
+  renders CCTV markers if no alternatives exist.
+
+  ---
+  Questions before I start:
+
+  1. Min CCTV distance — what do you think is a reasonable minimum spacing? 200m
+   means a 5km route would have ~25 CCTV nodes max. 300m would give ~17. What
+  makes sense for Aurangabad roads?
+  2. CCTV label style — do you want the label always visible on the map, or only
+   when you click/hover the marker popup?
+  3. Highlight style — when the ambulance activates a CCTV, should it turn
+  yellow, green, pulse, or some other visual?
+
+  Should I proceed with Tasks 2-4 in parallel while we decide on Task 1's
+  parameters?
+
+✻ Cooked for 1m 47s
+
+❯ answer: add cctv every 500m; show cctv on the route and make it green when    
+ambulance passes it; it should turn green                                       
+
+● Clear. Let me start implementing all three changes now.
+
+● Task 1: Fix CCTV density — 500m spacing
+
+● Update(backend\src\services\cctv\cctvService.ts)  ⎿  Added 1 line, removed 1 line
+      2  import type { CCTVNode } from "../../models/CCTVNode";
+      3  import { fetchRoadGraph, findClosestNode, type Graph } from "../
+         routing/roadGraph";
+      4  
+      5 -const TURN_THRESHOLD_DEG = 45;                                  
+      5 +const MIN_CCTV_DISTANCE_METERS = 500;                           
+      6  const NODE_MATCH_DISTANCE_METERS = 80;
+      7  
+      8  interface SharpTurnCandidate {
+
+● Now rewrite the generateCCTVNodes function to use 500m spacing as the primary
+  logic:
+
+● Update(backend\src\services\cctv\cctvService.ts)
+  ⎿  Added 64 lines, removed 38 lines
+       89  
+       90    const routeIndex = options.routeIndex ?? 0;
+       91    const routeId = `route-${routeIndex}`;
+       92 -  const turnThresholdDeg = options.turnThresholdDeg ?? TURN_TH
+          -RESHOLD_DEG;                                                  
+       92    const graphCache = options.graphCache ?? new Map<string, Pro
+           mise<Graph>>();
+       93  
+       95 -  const sharpTurns = detectSharpTurnCandidates(path, turnThres
+          -holdDeg);                                                     
+       96 -  const selectedTurns: Array<SharpTurnCandidate & { validated:
+          - boolean }> = [];                                             
+       94 +  // Always place CCTV at the START and END of the route      
+       95 +  const selectedIndices = new Set<number>([0, path.length - 1]
+          +);                                                            
+       96  
+       98 -  for (const candidate of sharpTurns) {                       
+       99 -    const point = path[candidate.index];                      
+       97 +  // Accumulate distance along the route and place a CCTV ever
+          +y MIN_CCTV_DISTANCE_METERS                                    
+       98 +  let accumulatedDistance = 0;                                
+       99 +  for (let i = 1; i < path.length; i++) {                     
+      100 +    accumulatedDistance += metersBetween(path[i - 1], path[i])
+          +;                                                             
+      101 +    if (accumulatedDistance >= MIN_CCTV_DISTANCE_METERS) {    
+      102 +      selectedIndices.add(i);                                 
+      103 +      accumulatedDistance = 0; // reset after placing         
+      104 +    }                                                         
+      105 +  }                                                           
+      106  
+      107 +  // Validate each selected index and record sharp-turn info  
+      108 +  const validatedNodes: Array<{                               
+      109 +    index: number;                                            
+      110 +    lat: number;                                              
+      111 +    lng: number;                                              
+      112 +    turnAngleDeg?: number;                                    
+      113 +    intersectionValidated: boolean;                           
+      114 +  }> = [];                                                    
+      115 +                                                              
+      116 +  for (const idx of Array.from(selectedIndices).sort((a, b) =>
+          + a - b)) {                                                    
+      117 +    const point = path[idx];                                  
+      118 +                                                              
+      119 +    let intersectionValidated = false;                        
+      120 +    let turnAngleDeg: number | undefined;                     
+      121 +                                                              
+      122      try {
+      123        const graph = await getGraphAtPoint(point, graphCache);
+      124        const closestNodeId = findClosestNode(point[0], point[1]
+           , graph);
+      125  
+      105 -      if (closestNodeId === -1) continue;                     
+      106 -                                                              
+      107 -      const closestNode = graph.nodes.get(closestNodeId);     
+      108 -      if (!closestNode) continue;                             
+      109 -                                                              
+      110 -      const degree = graph.edges.get(closestNodeId)?.length ??
+          - 0;                                                           
+      111 -      const pointDistance = metersBetween(point, [closestNode.
+          -lat, closestNode.lng]);                                       
+      112 -                                                              
+      113 -      if (degree >= 3 && pointDistance <= NODE_MATCH_DISTANCE_
+          -METERS) {                                                     
+      114 -        selectedTurns.push({ ...candidate, validated: true });
+      126 +      if (closestNodeId !== -1) {                             
+      127 +        const closestNode = graph.nodes.get(closestNodeId);   
+      128 +        if (closestNode) {                                    
+      129 +          const degree = graph.edges.get(closestNodeId)?.lengt
+          +h ?? 0;                                                       
+      130 +          const pointDistance = metersBetween(point, [closestN
+          +ode.lat, closestNode.lng]);                                   
+      131 +          if (degree >= 3 && pointDistance <= NODE_MATCH_DISTA
+          +NCE_METERS) {                                                 
+      132 +            intersectionValidated = true;                     
+      133 +          }                                                   
+      134 +        }                                                     
+      135        }
+      136      } catch {
+      117 -      // If Overpass lookup fails, skip validation for this po
+          -int instead of failing the simulation.                        
+      137 +      // Overpass validation failed — continue without validat
+          +ion                                                           
+      138      }
+      119 -  }                                                           
+      139  
+      121 -  const selectedIndices =                                     
+      122 -    selectedTurns.length > 0                                  
+      123 -      ? selectedTurns.map((turn) => turn.index)               
+      124 -      : [0, path.length - 1].filter((value, idx, arr) => arr.i
+          -ndexOf(value) === idx);                                       
+      140 +    // Calculate turn angle if we have neighbors              
+      141 +    if (idx > 0 && idx < path.length - 1) {                   
+      142 +      turnAngleDeg = turnAngleDeg(                            
+      143 +        path[idx - 1],                                        
+      144 +        path[idx],                                            
+      145 +        path[idx + 1]                                         
+      146 +      );                                                      
+      147 +    }                                                         
+      148  
+      126 -  return selectedIndices                                      
+      127 -    .sort((a, b) => a - b)                                    
+      128 -    .map((idx) => {                                           
+      129 -      const turn = selectedTurns.find((candidate) => candidate
+          -.index === idx);                                              
+      130 -                                                              
+      131 -      return {                                                
+      132 -        id: randomId(),                                       
+      133 -        lat: path[idx][0],                                    
+      134 -        lng: path[idx][1],                                    
+      135 -        status: "IDLE",                                       
+      136 -        lastUpdate: new Date(),                               
+      137 -        assignedRouteId: routeId,                             
+      138 -        routeIndex,                                           
+      139 -        pathIndex: idx,                                       
+      140 -        turnAngleDeg: turn?.angleDeg,                         
+      141 -        intersectionValidated: Boolean(turn?.validated),      
+      142 -      };                                                      
+      149 +    validatedNodes.push({                                     
+      150 +      index: idx,                                             
+      151 +      lat: point[0],                                          
+      152 +      lng: point[1],                                          
+      153 +      turnAngleDeg,                                           
+      154 +      intersectionValidated,                                  
+      155      });
+      156 +  }                                                           
+      157 +                                                              
+      158 +  return validatedNodes.map((node) => ({                      
+      159 +    id: randomId(),                                           
+      160 +    lat: node.lat,                                            
+      161 +    lng: node.lng,                                            
+      162 +    status: "IDLE",                                           
+      163 +    lastUpdate: new Date(),                                   
+      164 +    assignedRouteId: routeId,                                 
+      165 +    routeIndex,                                               
+      166 +    pathIndex: node.index,                                    
+      167 +    turnAngleDeg: node.turnAngleDeg,                          
+      168 +    intersectionValidated: node.intersectionValidated,        
+      169 +  }));                                                        
+      170  }
+
+● Now clean up the unused helpers (detectSharpTurnCandidates, SharpTurnCandidate
+   interface) since they're no longer needed:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(backend\src\services\cctv\cctvService.ts)
+  ⎿  Removed 6 lines
+       5  const MIN_CCTV_DISTANCE_METERS = 500;
+       6  const NODE_MATCH_DISTANCE_METERS = 80;
+       7  
+       8 -interface SharpTurnCandidate {                                 
+       9 -  index: number;                                               
+      10 -  angleDeg: number;                                            
+      11 -}                                                              
+      12 -                                                               
+       8  interface CCTVGenerationOptions {
+       9    routeIndex?: number;
+      15 -  turnThresholdDeg?: number;                                   
+      10    graphCache?: Map<string, Promise<Graph>>;
+      11  }
+      12  
+
+● Update(backend\src\services\cctv\cctvService.ts)
+  ⎿  Removed 16 lines
+      36    return normalizeDeg(Math.acos(cosine));
+      37  }
+      38  
+      39 -function detectSharpTurnCandidates(                            
+      40 -  path: LatLng[],                                              
+      41 -  turnThresholdDeg: number                                     
+      42 -): SharpTurnCandidate[] {                                      
+      43 -  const candidates: SharpTurnCandidate[] = [];                 
+      44 -                                                               
+      45 -  for (let i = 1; i < path.length - 1; i++) {                  
+      46 -    const angleDeg = turnAngleDeg(path[i - 1], path[i], path[i 
+         -+ 1]);                                                         
+      47 -    if (angleDeg >= turnThresholdDeg) {                        
+      48 -      candidates.push({ index: i, angleDeg });                 
+      49 -    }                                                          
+      50 -  }                                                            
+      51 -                                                               
+      52 -  return candidates;                                           
+      53 -}                                                              
+      54 -                                                               
+      39  function graphCacheKey(point: LatLng): string {
+      40    return `${point[0].toFixed(3)},${point[1].toFixed(3)}`;
+      41  }
+
+● Good. Now let me verify the final file is clean:
+
+  Read 1 file (ctrl+o to expand)
+
+● Backend Task 1 is done. Now the frontend — Tasks 2 & 3 together since they're
+  tightly coupled.
+
+● Tasks 2 & 3: CCTV icon + label + highlight when ambulance passes
+
+  In App.tsx, I need to pass the active CCTV to MapView. In MapView.jsx, I need
+  to render CCTV markers with labels and green-highlight when active.
+
+  Read 1 file (ctrl+o to expand)
+
+● First, update App.tsx to track the active CCTV ID and pass it + CCTV data to
+  MapView:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 4 lines
+      21    const [allRoutes, setAllRoutes] = useState<RouteWithCCTVs[]>(
+          []);
+      22    const [shortestRouteIndex, setShortestRouteIndex] = useState<
+          number | null>(null);
+      23    const [ambulancePos, setAmbulancePos] = useState<LatLng | nul
+          l>(null);
+      24 +  const [activeCCTVId, setActiveCCTVId] = useState<string | nul
+         +l>(null);                                                      
+      25    const [violations, setViolations] = useState<ViolationEvent[]
+          >([]);
+      26    const [logs, setLogs] = useState<EventLog[]>([]);
+      27    const [waypoints, setWaypoints] = useState<SimulationWaypoint
+          s | null>(null);
+      28    const [loading, setLoading] = useState(false);
+      29  
+      30 +  // CCTV nodes from the best route — used for proximity highli
+         +ghting                                                         
+      31 +  const bestRouteCCTVs = shortestRouteIndex !== null ? (allRout
+         +es[shortestRouteIndex]?.cctvs ?? []) : [];                     
+      32 +                                                               
+      33    const animationRef = useRef<number | null>(null);
+      34  
+      35    // Fetch hospitals from backend on mount
+
+● Now add a proximity helper and wire it into the animation loop:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 19 lines
+      14  
+      15  type LatLng = [number, number];
+      16  const AMBULANCE_ANIMATION_INTERVAL_MS = 100;
+      17 +const CCTV_HIGHLIGHT_DISTANCE_METERS = 50;                     
+      18  
+      19 +function metersBetween(a: LatLng, b: LatLng): number {         
+      20 +  return Math.hypot(a[0] - b[0], a[1] - b[1]) * 111000;        
+      21 +}                                                              
+      22 +                                                               
+      23 +function findNearestCCTV(pos: LatLng, cctvs: CCTVNode[]): strin
+         +g | null {                                                     
+      24 +  if (!pos || cctvs.length === 0) return null;                 
+      25 +  let nearest: string | null = null;                           
+      26 +  let minDist = Infinity;                                      
+      27 +  for (const cctv of cctvs) {                                  
+      28 +    const dist = metersBetween(pos, [cctv.lat, cctv.lng]);     
+      29 +    if (dist < minDist && dist < CCTV_HIGHLIGHT_DISTANCE_METERS
+         +) {                                                            
+      30 +      minDist = dist;                                          
+      31 +      nearest = cctv.id;                                       
+      32 +    }                                                          
+      33 +  }                                                            
+      34 +  return nearest;                                              
+      35 +}                                                              
+      36 +                                                               
+      37  function App() {
+      38    const [hospitals, setHospitals] = useState<Hospital[]>([]);
+      39    const [route, setRoute] = useState<LatLng[]>([]);
+
+● Now add CCTVNode to the imports:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 1 line
+       6    getHospitals,
+       7    startSimulation,
+       8    type Hospital,
+       9 +  type CCTVNode,                                               
+      10    type EventLog,
+      11    type SimulationWaypoints,
+      12    type ViolationEvent,
+
+● Update the animation loop in simulate() to detect and set the active CCTV:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 3 lines, removed 1 line
+      90        // Ambulance animation along the route
+      91        let i = 0;
+      92        animationRef.current = window.setInterval(() => {
+      93 -        setAmbulancePos(result.route[i]);                      
+      93 +        const pos = result.route[i];                           
+      94 +        setAmbulancePos(pos);                                  
+      95 +        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs)); 
+      96          i++;
+      97  
+      98          if (i >= result.route.length && animationRef.current !=
+          = null) {
+● Also update the handleOrganDispatch and handlePatientDispatch animation loops:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+● I need to update the organ and patient dispatch handlers to also set
+  activeCCTVId, and pass the new props to MapView:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 4 lines, removed 1 line
+      141      setViolations([]);
+      142      setLogs(logs);
+      143      setWaypoints(null);
+      144 +    setActiveCCTVId(null);                                    
+      145      setAmbulancePos((result.route && result.route[0]) || null)
+           ;
+      146  
+      147      // Ambulance animation along the route
+      148      if (result.route && result.route.length > 0) {
+      149        let i = 0;
+      150        animationRef.current = window.setInterval(() => {
+      150 -        setAmbulancePos(result.route[i]);                     
+      151 +        const pos = result.route[i];                          
+      152 +        setAmbulancePos(pos);                                 
+      153 +        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs));
+      154          i++;
+      155          if (i >= result.route.length && animationRef.current !
+           == null) {
+      156            clearInterval(animationRef.current);
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 4 lines, removed 1 line
+      194      setViolations([]);
+      195      setLogs(logs);
+      196      setWaypoints(null);
+      197 +    setActiveCCTVId(null);                                    
+      198      setAmbulancePos((result.route && result.route[0]) || null)
+           ;
+      199  
+      200      // Ambulance animation along the route
+      201      if (result.route && result.route.length > 0) {
+      202        let i = 0;
+      203        animationRef.current = window.setInterval(() => {
+      203 -        setAmbulancePos(result.route[i]);                     
+      204 +        const pos = result.route[i];                          
+      205 +        setAmbulancePos(pos);                                 
+      206 +        setActiveCCTVId(findNearestCCTV(pos, bestRouteCCTVs));
+      207          i++;
+      208          if (i >= result.route.length && animationRef.current !
+           == null) {
+      209            clearInterval(animationRef.current);
+
+● Now pass the new props to MapView:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 2 lines
+      224            allRoutes={allRoutes}
+      225            shortestRouteIndex={shortestRouteIndex}
+      226            ambulancePos={ambulancePos}
+      227 +          activeCCTVId={activeCCTVId}                         
+      228 +          bestRouteCCTVs={bestRouteCCTVs}                     
+      229          />
+      230        </section>
+      231  
+
+● Now update MapView.jsx — accept new props, use larger CCTV icon + label div
+  icon, turn green when active:
+
+● Write(frontend\src\components\MapView.jsx)
+  ⎿  Added 93 lines, removed 26 lines
+      29    iconSize: [35, 35],
+      30  });
+      31  
+      32 -const cctvIcon = new L.Icon({                                  
+      32 +// CCTV icon — two variants: default (grey) and active (green) 
+      33 +const cctvIconBase = {                                         
+      34    iconUrl: "https://cdn-icons-png.flaticon.com/512/1532/1532688
+          .png",
+      34 -  iconSize: [24, 24],                                          
+      35 -  iconAnchor: [12, 24],                                        
+      36 -  popupAnchor: [0, -18],                                       
+      35 +  iconSize: [38, 38],                                          
+      36 +  iconAnchor: [19, 38],                                        
+      37 +  popupAnchor: [0, -24],                                       
+      38 +};                                                             
+      39 +                                                               
+      40 +const defaultCCTVIcon = new L.Icon({                           
+      41 +  ...cctvIconBase,                                             
+      42  });
+      43  
+      44 +const activeCCTVIcon = new L.Icon({                            
+      45 +  ...cctvIconBase,                                             
+      46 +  iconUrl: "https://cdn-icons-png.flaticon.com/512/564/564445.p
+         +ng", // green camera icon                                      
+      47 +});                                                            
+      48 +                                                               
+      49 +// Creates a divIcon label placed next to the marker           
+      50 +function cctvLabelIcon(label: string, isActive: boolean) {     
+      51 +  return new L.DivIcon({                                       
+      52 +    html: `<div style="                                        
+      53 +      background: ${isActive ? "#22c55e" : "#64748b"};         
+      54 +      color: #fff;                                             
+      55 +      font-size: 10px;                                         
+      56 +      font-weight: 700;                                        
+      57 +      padding: 2px 5px;                                        
+      58 +      border-radius: 4px;                                      
+      59 +      white-space: nowrap;                                     
+      60 +      pointer-events: none;                                    
+      61 +      box-shadow: 0 1px 4px rgba(0,0,0,0.4);                   
+      62 +      border: 1px solid ${isActive ? "#16a34a" : "#475569"};   
+      63 +    ">${label}</div>`,                                         
+      64 +    className: "",                                             
+      65 +    iconSize: [60, 18],                                        
+      66 +    iconAnchor: [30, -5],                                      
+      67 +  });                                                          
+      68 +}                                                              
+      69 +                                                               
+      70  const altColors = ["#277DA1", "#F3722C", "#577590", "#F8961E", 
+          "#43AA8B"];
+      71  
+      72  export default function MapView({
+     ...
+      75    allRoutes = [],
+      76    shortestRouteIndex = null,
+      77    ambulancePos,
+      78 +  activeCCTVId = null,                                         
+      79 +  bestRouteCCTVs = [],                                         
+      80  }) {
+      81 +  // Build a quick lookup: cctvId → index label                
+      82 +  const cctvLabelMap: Record<string, number> = {};             
+      83 +  bestRouteCCTVs.forEach((cctv, i) => {                        
+      84 +    cctvLabelMap[cctv.id] = i + 1;                             
+      85 +  });                                                          
+      86 +                                                               
+      87    return (
+      88      <MapContainer
+      89        center={[19.8762, 75.3433]}
+     ...
+      121          );
+      122        })}
+      123  
+       85 -      {allRoutes.map((routeItem, idx) => {                    
+       86 -        const color = altColors[idx % altColors.length];      
+      124 +      {/* CCTV markers for ALL routes */}                     
+      125 +      {allRoutes.map((routeItem) =>                           
+      126 +        (routeItem.cctvs || []).map((cctv) => {               
+      127 +          const isActive = cctv.id === activeCCTVId;          
+      128 +          const labelNum = cctvLabelMap[cctv.id] ?? cctv.id;  
+      129 +          const label = `CCTV ${labelNum}`;                   
+      130  
+       88 -        return (routeItem.cctvs || []).map((cctv) => (        
+      131 +          return (                                            
+      132 +            <Marker                                           
+      133 +              key={`cctv-${routeItem.index}-${cctv.id}`}      
+      134 +              position={[cctv.lat, cctv.lng]}                 
+      135 +              icon={isActive ? activeCCTVIcon : defaultCCTVIco
+          +n}                                                            
+      136 +            >                                                 
+      137 +              <Popup>                                         
+      138 +                <div style={{ minWidth: 160 }}>               
+      139 +                  <div                                        
+      140 +                    style={{                                  
+      141 +                      fontWeight: 700,                        
+      142 +                      marginBottom: 4,                        
+      143 +                      color: isActive ? "#22c55e" : "#334155",
+      144 +                    }}                                        
+      145 +                  >                                           
+      146 +                    {label}                                   
+      147 +                  </div>                                      
+      148 +                  <div>Route: {routeItem.index + 1}</div>     
+      149 +                  <div>Status: {cctv.status}</div>            
+      150 +                  {typeof cctv.turnAngleDeg === "number" && ( 
+      151 +                    <div>Turn: {cctv.turnAngleDeg.toFixed(1)} 
+          +deg</div>                                                     
+      152 +                  )}                                          
+      153 +                  <div style={{ marginTop: 6 }}>              
+      154 +                    {routeItem.index === shortestRouteIndex   
+      155 +                      ? "🟢 Best route"                       
+      156 +                      : "🔵 Alternative route"}               
+      157 +                  </div>                                      
+      158 +                </div>                                        
+      159 +              </Popup>                                        
+      160 +            </Marker>                                         
+      161 +          );                                                  
+      162 +        })                                                    
+      163 +      )}                                                      
+      164 +                                                              
+      165 +      {/* CCTV label overlays — only for best route CCTV nodes
+          + */}                                                          
+      166 +      {bestRouteCCTVs.map((cctv) => {                         
+      167 +        const isActive = cctv.id === activeCCTVId;            
+      168 +        const labelNum = cctvLabelMap[cctv.id] ?? cctv.id;    
+      169 +        return (                                              
+      170            <Marker
+       90 -            key={`cctv-${routeItem.index}-${cctv.id}`}        
+      171 +            key={`cctv-label-${cctv.id}`}                     
+      172              position={[cctv.lat, cctv.lng]}
+       92 -            icon={cctvIcon}                                   
+       93 -          >                                                   
+       94 -            <Popup>                                           
+       95 -              <div style={{ minWidth: 160 }}>                 
+       96 -                <div style={{ fontWeight: 700, marginBottom: 4
+          - }}>CCTV Node</div>                                           
+       97 -                <div>Route: {routeItem.index + 1}</div>       
+       98 -                <div>ID: {cctv.id}</div>                      
+       99 -                <div>Status: {cctv.status}</div>              
+      100 -                {typeof cctv.turnAngleDeg === "number" && (   
+      101 -                  <div>Turn: {cctv.turnAngleDeg.toFixed(1)} de
+          -g</div>                                                       
+      102 -                )}                                            
+      103 -                <div style={{ marginTop: 6, color }}>         
+      104 -                  {routeItem.index === shortestRouteIndex ? "B
+          -est route marker" : "Alternative route marker"}               
+      105 -                </div>                                        
+      106 -              </div>                                          
+      107 -            </Popup>                                          
+      108 -          </Marker>                                           
+      109 -        ));                                                   
+      173 +            icon={cctvLabelIcon(`CCTV ${labelNum}`, isActive)}
+      174 +            interactive={false}                               
+      175 +          />                                                  
+      176 +        );                                                    
+      177        })}
+      178  
+      179        {/* Fallback route renderer */}
+
+● Now let me check the simulation controller to verify the data flow and
+  bestRouteIndex:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● The data flow looks solid. Let me quickly verify fetchRoutes to confirm routes
+   always has at least one entry:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● All good. Let me mark the remaining tasks complete.
+
+● All done. Here's a summary of what was changed:
+
+  Backend — cctvService.ts
+  - Replaced the sharp-turn detection logic with distance-based placement: CCTV
+  nodes are now placed every 500m along the route, plus always at start and end
+  - Removed the now-unused SharpTurnCandidate type and detectSharpTurnCandidates
+   function
+  - The Overpass intersection validation is preserved but no longer gates
+  placement
+
+  Frontend — App.tsx
+  - Added activeCCTVId state and bestRouteCCTVs derived from
+  allRoutes[shortestRouteIndex]?.cctvs
+  - Added findNearestCCTV() — checks if ambulance is within 50m of any CCTV on
+  the best route
+  - All three animation loops (simulate, handleOrganDispatch,
+  handlePatientDispatch) now call findNearestCCTV each frame and pass
+  activeCCTVId + bestRouteCCTVs to MapView
+
+  Frontend — MapView.jsx
+  - CCTV icon bumped from 24×24 → 38×38
+  - Active CCTV (when ambulance is near) switches to a green camera icon
+  (564445.png)
+  - Every CCTV on the best route gets a floating label div ("CCTV 1", "CCTV 2",
+  …) rendered as a non-interactive DivIcon overlay next to the marker
+  - Inactive CCTV markers are grey, active ones are green with the popup also
+  updating color
+
+  Run npm run dev in both frontend and backend to test. You should now see
+  ~every 500m: a grey camera icon with a "CCTV 1" label, turning green as the
+  ambulance passes within 50m.
+
+✻ Crunched for 5m 1s
+
+❯ what is this error:                                                           
+                                                                                
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend>npm run dev                  
+                                                                                
+> traffic-sim-backend@1.0.0 dev                                                 
+> ts-node src/server.ts                                                         
+                                                                                
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\node_modules\ts-node\src\ind 
+ex.ts:859                                                                       
+    return new TSError(diagnosticText, diagnosticCodes, diagnostics);           
+           ^                                                                    
+TSError: ⨯ Unable to compile TypeScript:                                        
+src/services/cctv/cctvService.ts:120:22 - error TS2349: This expression is not  
+callable.                                                                       
+  Type 'Number' has no call signatures.                                         
+                                                                                
+120       turnAngleDeg = turnAngleDeg(                                          
+                         ~~~~~~~~~~~~                                           
+src/services/cctv/cctvService.ts:120:22 - error TS2722: Cannot invoke an object 
+ which is possibly 'undefined'.                                                 
+                                                                                
+120       turnAngleDeg = turnAngleDeg(                                          
+                         ~~~~~~~~~~~~                                           
+src/services/cctv/cctvService.ts:120:22 - error TS18048: 'turnAngleDeg' is      
+possibly 'undefined'.                                                           
+                                                                                
+120       turnAngleDeg = turnAngleDeg(                                          
+                         ~~~~~~~~~~~~                                           
+                                                                                
+    at createTSError (D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\node_m 
+odules\ts-node\src\index.ts:859:12)                                             
+    at reportTSError (D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\node_m 
+odules\ts-node\src\index.ts:863:19)                                             
+    at getOutput (D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\node_modul 
+es\ts-node\src\index.ts:1077:36)                                                
+    at Object.compile (D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\node_ 
+modules\ts-node\src\index.ts:1433:41)                                           
+    at Module.m._compile (D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\backend\no 
+de_modules\ts-node\src\index.ts:1617:30)                                        
+    at node:internal/modules/cjs/loader:1839:10                                 
+    at Object.require.extensions.<computed> [as .ts] (D:\STUDY\PROJECTS\MGM-Syn 
+cFlow\traffic-sim\backend\node_modules\ts-node\src\index.ts:1621:12)            
+    at Module.load (node:internal/modules/cjs/loader:1441:32)                   
+    at Function._load (node:internal/modules/cjs/loader:1263:12)                
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14) {             
+  diagnosticCodes: [ 2349, 2722, 18048 ]                                        
+} this is an simple error, solve this                                           
+● Simple — the local variable turnAngleDeg shadows the function of the same
+  name. Just rename the local variable:
+
+● Update(backend\src\services\cctv\cctvService.ts)
+  ⎿  Added 3 lines, removed 3 lines
+       95      const point = path[idx];
+       96  
+       97      let intersectionValidated = false;
+       98 -    let turnAngleDeg: number | undefined;                     
+       98 +    let computedTurnAngle: number | undefined;                
+       99  
+      100      try {
+      101        const graph = await getGraphAtPoint(point, graphCache);
+     ...
+      117  
+      118      // Calculate turn angle if we have neighbors
+      119      if (idx > 0 && idx < path.length - 1) {
+      120 -      turnAngleDeg = turnAngleDeg(                            
+      120 +      computedTurnAngle = turnAngleDeg(                       
+      121          path[idx - 1],
+      122          path[idx],
+      123          path[idx + 1]
+     ...
+      128        index: idx,
+      129        lat: point[0],
+      130        lng: point[1],
+      131 -      turnAngleDeg,                                           
+      131 +      turnAngleDeg: computedTurnAngle,                        
+      132        intersectionValidated,
+      133      });
+      134    }
+
+● Fixed. The local let turnAngleDeg was shadowing the function turnAngleDeg —
+  renamed to computedTurnAngle so there's no name collision. Should compile now.
+
+❯ now what is this: D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend>npm run 
+ dev                                                                            
+                                                                                
+> traffic-sim@0.0.0 dev                                                         
+> vite                                                                          
+                                                                                
+                                                                                
+  VITE v8.0.3  ready in 251 ms                                                  
+                                                                                
+  ➜  Local:   http://localhost:5173/                                            
+  ➜  Network: use --host to expose                                              
+  ➜  press h + enter to show help                                               
+12:47:47 am [vite] Internal server error: [BabelError]                          
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend\src\components\MapView.jsx: 
+ Unexpected token, expected "," (50:28)                                         
+                                                                                
+  48 |                                                                          
+  49 | // Creates a divIcon label placed next to the marker                     
+> 50 | function cctvLabelIcon(label: string, isActive: boolean) {               
+     |                             ^                                            
+  51 |   return new L.DivIcon({                                                 
+  52 |     html: `<div style="                                                  
+  53 |       background: ${isActive ? "#22c55e" : "#64748b"};                   
+12:47:47 am [vite] (client) Pre-transform error: [BabelError]                   
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend\src\components\MapView.jsx: 
+ Unexpected token, expected "," (50:28)                                         
+                                                                                
+  48 |                                                                          
+  49 | // Creates a divIcon label placed next to the marker                     
+> 50 | function cctvLabelIcon(label: string, isActive: boolean) {               
+     |                             ^                                            
+  51 |   return new L.DivIcon({                                                 
+  52 |     html: `<div style="                                                  
+  53 |       background: ${isActive ? "#22c55e" : "#64748b"};                   
+                                                                                
+
+● .jsx files don't support TypeScript type annotations — Vite's Babel preset
+  only parses JS, not TS, in .jsx files. Remove the types:
+
+● Update(frontend\src\components\MapView.jsx)
+  ⎿  Added 1 line, removed 1 line
+      47  });
+      48  
+      49  // Creates a divIcon label placed next to the marker
+      50 -function cctvLabelIcon(label: string, isActive: boolean) {     
+      50 +function cctvLabelIcon(label, isActive) {                      
+      51    return new L.DivIcon({
+      52      html: `<div style="
+      53        background: ${isActive ? "#22c55e" : "#64748b"};
+
+● Fixed. .jsx files don't support TypeScript syntax — Vite uses Babel (not the
+  TS compiler) to transform them, and Babel only understands JS. Should start
+  cleanly now.
+
+❯ 12:48:27 am [vite] Internal server error: [BabelError]                        
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend\src\components\MapView.jsx: 
+ Missing initializer in const declaration. (82:20)                              
+                                                                                
+  80 | }) {                                                                     
+  81 |   // Build a quick lookup: cctvId → index label                          
+> 82 |   const cctvLabelMap: Record<string, number> = {};                       
+     |                     ^                                                    
+  83 |   bestRouteCCTVs.forEach((cctv, i) => {                                  
+  84 |     cctvLabelMap[cctv.id] = i + 1;                                       
+  85 |   });                                                                    
+12:48:27 am [vite] (client) Pre-transform error: [BabelError]                   
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend\src\components\MapView.jsx: 
+ Missing initializer in const declaration. (82:20)                              
+                                                                                
+  80 | }) {                                                                     
+  81 |   // Build a quick lookup: cctvId → index label                          
+> 82 |   const cctvLabelMap: Record<string, number> = {};                       
+     |                     ^                                                    
+  83 |   bestRouteCCTVs.forEach((cctv, i) => {                                  
+  84 |     cctvLabelMap[cctv.id] = i + 1;                                       
+  85 |   });                                                                    
+12:48:29 am [vite] Internal server error: [BabelError]                          
+D:\STUDY\PROJECTS\MGM-SyncFlow\traffic-sim\frontend\src\components\MapView.jsx: 
+ Missing initializer in const declaration. (82:20)                              
+                                                                                
+  80 | }) {                                                                     
+  81 |   // Build a quick lookup: cctvId → index label                          
+> 82 |   const cctvLabelMap: Record<string, number> = {};                       
+     |                     ^                                                    
+  83 |   bestRouteCCTVs.forEach((cctv, i) => {                                  
+  84 |     cctvLabelMap[cctv.id] = i + 1;                                       
+  85 |   });                                                                    
+                                                                                
+
+● Same thing — TypeScript annotation in a .jsx file. Strip it:
+
+● Update(frontend\src\components\MapView.jsx)
+  ⎿  Added 1 line, removed 1 line
+      79    bestRouteCCTVs = [],
+      80  }) {
+      81    // Build a quick lookup: cctvId → index label
+      82 -  const cctvLabelMap: Record<string, number> = {};             
+      82 +  const cctvLabelMap = {};                                     
+      83    bestRouteCCTVs.forEach((cctv, i) => {
+      84      cctvLabelMap[cctv.id] = i + 1;
+      85    });
+
+● Let me also scan for any other TS annotations lurking in the file:
+
+  Read 1 file (ctrl+o to expand)
+
+● No more TS annotations — the file is clean now. That was the last one. The dev
+   server should start without errors.
+
+❯ the route generation and traveling is taking too long, whats the issue?       
+
+● Let me check the route and animation parameters to diagnose the bottleneck.
+
+  Searched for 2 patterns (ctrl+o to expand)
+
+● Two compounding problems:
+
+  1. overview=full — OSRM returns a point roughly every 5–10 meters. A 10km
+  route = ~1000–2000 points. With the animation interval at 100ms per point,
+  that alone takes 100–200 seconds just to traverse.
+  2. Animation interval too slow — 100ms × 1000 points = the ambulance crawls.
+
+  Let me fix both:
+
+● Update(backend\src\services\routing\hybridRouting.ts)
+  ⎿  File must be read first
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(backend\src\services\routing\hybridRouting.ts)
+  ⎿  Added 1 line, removed 1 line
+      18    start: LatLng,
+      19    end: LatLng
+      20  ): Promise<RouteOption[]> {
+      21 -  const url = `${config.osrmUrl}/route/v1/driving/${start[1]},$
+         -{start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson
+         -&alternatives=true`;                                           
+      21 +  const url = `${config.osrmUrl}/route/v1/driving/${start[1]},$
+         +{start[0]};${end[1]},${end[0]}?overview=simplified&geometries=g
+         +eojson&alternatives=true`;                                     
+      22  
+      23    const res = await fetch(url);
+      24    const data = await res.json() as { routes: OSRMResponse["rout
+          es"] };
+
+● Now speed up the animation interval too:
+
+● Update(frontend\src\App.tsx)
+  ⎿  Added 1 line, removed 1 line
+      14  } from "./services/api";
+      15  
+      16  type LatLng = [number, number];
+      17 -const AMBULANCE_ANIMATION_INTERVAL_MS = 100;                   
+      17 +const AMBULANCE_ANIMATION_INTERVAL_MS = 40;                    
+      18  const CCTV_HIGHLIGHT_DISTANCE_METERS = 50;
+      19  
+      20  function metersBetween(a: LatLng, b: LatLng): number {
+● Two fixes applied:
+
+  1. overview=simplified instead of overview=full in the OSRM URL — OSRM returns
+   far fewer polyline points (roughly every ~100m instead of every ~5-10m). A
+  10km route drops from ~1000 points to ~100 points.
+  2. Animation interval: 100ms → 40ms — ambulance moves 2.5× faster, so the full
+   route traversal goes from ~100–200 seconds down to ~4–8 seconds.
+
+  Restart the backend (so it picks up the OSRM URL change) and frontend dev
+  servers to test. If it's still too slow, we can go even more aggressive on
+  overview=simplified or further reduce the interval.
+
+✻ Worked for 57s
