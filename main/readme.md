@@ -1,153 +1,282 @@
-# 🖥️ WHAT YOUR DASHBOARD SHOULD SHOW
+# 🧩 1. HEADER BAR (TOP)
 
-Think like a real operator.
+### Purpose:
 
----
+* Context + controls
 
-## 🎥 1. Live CCTV Grid
-### Show:
+### Elements:
 
-* 6–12 CCTV panels (grid)
-* Each labeled:
-
-  * CCTV ID (S1, S2…)
-  * location
+* Project title:
+  **“City Traffic Command Center”**
 * Status badge:
 
-  * 🟢 NORMAL
-  * 🟡 HIGH TRAFFIC
-  * 🔴 EMERGENCY
+  * 🟢 Normal
+  * 🔴 Emergency Active
+* Toggle:
+
+  * AI ON / OFF
 
 ---
 
-## 🚑 2. Emergency Highlight (MOST IMPORTANT)
+# 🎥 2. LEFT SIDE (70%) — CCTV GRID
 
-When ambulance detected:
+### Layout:
 
-* That CCTV panel becomes:
+* **4 x 4 grid (16 CCTV feeds)**
 
-  * 🔴 blinking border
-  * zoomed / enlarged
+---
 
-### Show:
+## Each CCTV Card (IMPORTANT)
 
-```id="g6zj8n"
-CCTV: S7
-Status: EMERGENCY
-Ambulance Detected: YES
-Confidence: 0.94
+Each card should show:
+
+```
+-------------------------
+| CCTV S7              |
+| Location: Sector 7   |
+|                      |
+| [ FAKE VIDEO AREA ]  |
+|                      |
+| Status: 🟢 NORMAL     |
+-------------------------
 ```
 
 ---
 
-## 🧠 3. Priority Feed System (YOUR IDEA)
+## States of CCTV Card
 
-👉 THIS is your innovation
+### 🟢 Normal
 
-> “When ambulance is detected, those CCTV feeds take priority”
-
-### Implementation:
-
-* Move emergency CCTV to top-left
-* Dim others
-* Show label:
-
-> 🚨 PRIORITY FEED ACTIVE
+* Green border
+* Label: NORMAL
 
 ---
 
-## 🗺️ 4. Mini Map Sync
+### 🟡 High Traffic
 
-* highlight CCTV location on grid
-* show ambulance path
+* Yellow border
+* Label: HIGH TRAFFIC
 
 ---
 
-## 📜 5. Event Log Panel
+### 🔴 Emergency (MOST IMPORTANT)
 
-```id="ap50pb"
-[12:01:02] CCTV S3 → HIGH TRAFFIC
-[12:01:10] CCTV S7 → AMBULANCE DETECTED
-[12:01:11] PRIORITY MODE ACTIVATED
+* Red blinking border
+* Label: AMBULANCE DETECTED
+* Slight zoom effect
+
+---
+
+## 🧠 Behavior
+
+* All 16 shown initially
+* When ambulance detected:
+
+  * That CCTV:
+
+    * moves to **top-left**
+    * gets highlighted
+    * slight scale animation
+
+---
+
+# 📊 3. RIGHT SIDE (30%) — CONTROL + ROUTE PANEL
+
+Split into 3 sections vertically:
+
+```
+-------------------------
+| 1. Request Info        |
+-------------------------
+| 2. Route CCTV List     |
+-------------------------
+| 3. Event Logs          |
+-------------------------
 ```
 
 ---
 
-## 🎛️ 6. Control Actions (OPTIONAL BUT POWERFUL)
+## 🏥 1. REQUEST INFO PANEL
+
+### Shows ONLY when request comes
+
+```
+Hospital B → Hospital A
+Type: ORGAN TRANSFER
+Ambulance: A1
+Status: ACTIVE
+```
+
+---
+
+## 🗺️ 2. ROUTE CCTV PANEL (VERY IMPORTANT)
+
+👉 This is your main feature
+
+### Shows:
+
+```
+ROUTE TRACKING:
+
+[S3] → [S7] → [S9] → [S12]
+```
+
+---
+
+### UI Behavior:
+
+* Current CCTV:
+
+  * 🔴 highlighted
+* Next CCTV:
+
+  * 🟡
+* Passed:
+
+  * faded / green
+
+---
+
+### Example:
+
+```
+S3 ✅ → S7 🔴 → S9 🟡 → S12
+```
+
+---
+
+## 📜 3. EVENT LOG PANEL
+
+Scrollable list:
+
+```
+[12:01] Request initiated
+[12:02] Route calculated
+[12:03] Ambulance detected at S3
+[12:04] Corridor activated
+[12:05] Passed S3 → S7 active
+```
+
+---
+
+# 🎛️ OPTIONAL CONTROLS (TOP OF RIGHT PANEL)
 
 Buttons:
 
-* Focus CCTV
-* Trigger emergency
-* Switch AI ON/OFF
+* Trigger Request
+* Simulate Ambulance
+* Route Deviation (optional)
 
 ---
 
-# ⚙️ HOW TO BUILD THIS (SIMPLE WAY)
-
-You do NOT need real video.
+# 🔄 UI STATE FLOW (VERY IMPORTANT)
 
 ---
 
-## 🎥 Fake CCTV Feed
+## 🟢 STATE 1: NORMAL
 
-Use:
-
-* looping videos
-* or animated canvas
+* All CCTV = green
+* Right panel empty
 
 ---
 
-## 🧠 Backend sends:
+## 🔴 STATE 2: REQUEST RECEIVED
 
-```json id="a6h1qk"
-{
-  "cctvs": [
-    {"id": "S1", "status": "NORMAL"},
-    {"id": "S7", "status": "EMERGENCY", "ambulance": true}
-  ]
-}
+* Right panel shows:
+
+  * request info
+  * route
+* CCTV unchanged yet
+
+---
+
+## 🚑 STATE 3: AMBULANCE DETECTED
+
+* One CCTV turns RED
+* Moves to top-left
+* Route panel highlights first node
+
+---
+
+## 🚦 STATE 4: MOVEMENT
+
+* CCTV highlight shifts (S3 → S7 → S9)
+* Route panel updates
+* Logs update
+
+---
+
+## ✅ STATE 5: COMPLETED
+
+* All return to NORMAL
+* Show:
+
+  * “Corridor Completed”
+
+---
+
+# 🧩 COMPONENT STRUCTURE (REACT)
+
+---
+
+## Main Layout
+
+```jsx
+<App>
+  <Header />
+  <MainLayout>
+    <CCTVGrid />      // 70%
+    <SidePanel />     // 30%
+  </MainLayout>
+</App>
 ```
 
 ---
 
-## 🎯 Frontend Logic
+## CCTV Grid
 
-```javascript
-if (cctv.ambulance) {
-  highlight(cctv)
-  moveToPriorityView(cctv)
-}
+```jsx
+<CCTVGrid>
+  {cctvs.map(c => (
+    <CCTVCard data={c} />
+  ))}
+</CCTVGrid>
 ```
 
-# 🧠 WHY THIS IS A GAME CHANGER
+---
 
-Without this:
+## CCTV Card
 
-* your system = backend + simulation
-
-With this:
-
-* your system = **real city infrastructure**
+```jsx
+<CCTVCard>
+  - id
+  - status
+  - highlight
+</CCTVCard>
+```
 
 ---
 
-# 🏆 Hidden Advantage
+## Side Panel
 
-Judges will think:
-
-> “This is not just automation — this integrates with human operators”
-
-💀 That’s enterprise-level thinking.
+```jsx
+<SidePanel>
+  <RequestInfo />
+  <RouteTracker />
+  <EventLog />
+</SidePanel>
+```
 
 ---
 
-# ⚔️ Final Verdict
+# 🎨 DESIGN RULES (IMPORTANT)
 
-👉 YES, these analysts exist
-👉 YES, your idea is correct
-👉 YES, you SHOULD build this
+* Dark theme (control room feel)
+* Use:
 
-And:
+  * Green → normal
+  * Yellow → warning
+  * Red → emergency
+* Smooth transitions (not instant jumps)
 
-> 🔥 This dashboard will massively boost your demo impact
+---
