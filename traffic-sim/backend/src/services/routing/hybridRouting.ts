@@ -18,13 +18,17 @@ export async function fetchRoutes(
   start: LatLng,
   end: LatLng
 ): Promise<RouteOption[]> {
-  const url = `${config.osrmUrl}/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson&alternatives=true`;
+  const url = `${config.osrmUrl}/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=simplified&geometries=geojson&alternatives=true`;
 
   const res = await fetch(url);
-  const data = await res.json() as OSRMResponse;
+  const data = await res.json() as { routes: OSRMResponse["routes"] };
 
-  return data.routes.map((r) => ({
-    index: 0,
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error(`OSRM returned no routes for ${start} -> ${end}`);
+  }
+
+  return data.routes.map((r, idx) => ({
+    index: idx,
     path: r.geometry.coordinates.map(([lng, lat]) => [lat, lng] as LatLng),
     distance: r.distance,
     duration: r.duration,

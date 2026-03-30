@@ -7,6 +7,10 @@ export interface CCTVNode {
   status: CCTVStatus;
   lastUpdate?: Date;
   assignedRouteId?: string;
+  routeIndex?: number;
+  pathIndex?: number;
+  turnAngleDeg?: number;
+  intersectionValidated?: boolean;
 }
 
 export interface ViolationEvent {

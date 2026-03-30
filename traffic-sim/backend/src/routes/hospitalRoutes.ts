@@ -26,6 +26,34 @@ export const hospitals: Hospital[] = [
     lng: 75.3305,
     address: "Maharashtra, India",
   },
+  {
+    id: "H4",
+    name: "Soni Hospital",
+    lat: 19.8777,
+    lng: 75.3473,
+    address: "Maheshnagar Road, Aurangabad, Maharashtra",
+  },
+  {
+    id: "H5",
+    name: "M.G.M. Hospital",
+    lat: 19.8779,
+    lng: 75.3542,
+    address: "Aurangabad, Maharashtra",
+  },
+  {
+    id: "H6",
+    name: "Dr. Hedgewar Rugnalya",
+    lat: 19.8691,
+    lng: 75.3482,
+    address: "Aurangabad, Maharashtra",
+  },
+  {
+    id: "H7",
+    name: "AIMS Hospital",
+    lat: 19.9049,
+    lng: 75.3565,
+    address: "Aurangabad, Maharashtra",
+  },
 ];
 
 router.get("/", (_req, res) => {

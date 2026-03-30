@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "WebSearch",
+      "Bash(npm run:*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill:*)",
+      "Bash(curl -s \"https://router.project-osrm.org/route/v1/driving/75.3433,19.8762;75.329,19.8553?overview=full&geometries=geojson&alternatives=true\")",
+      "Bash(lsof -ti:5000)",
+      "Bash(xargs kill:*)",
+      "Bash(curl -s -X POST http://localhost:5000/api/dispatch/organ -H \"Content-Type: application/json\" -d '{\"\"\"\"organType\"\"\"\":\"\"\"\"Heart\"\"\"\",\"\"\"\"bloodGroup\"\"\"\":\"\"\"\"O+\"\"\"\",\"\"\"\"destinationHospital\"\"\"\":\"\"\"\"Government Medical College\"\"\"\",\"\"\"\"urgencyLevel\"\"\"\":\"\"\"\"critical\"\"\"\"}')"
     ]
   }
 }
